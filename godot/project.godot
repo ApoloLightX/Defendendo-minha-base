@@ -1,0 +1,40 @@
+; Aetherfall Defense — Godot 4.5.1
+; Target: Android landscape / Compatibility renderer
+
+config_version=5
+
+[application]
+config/name="Aetherfall Defense"
+config/description="Tactical tower defense on the last luminous frontier."
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.5", "GL Compatibility")
+
+[autoload]
+SaveManager="*res://scripts/core/save_manager.gd"
+AudioManager="*res://scripts/core/audio_manager.gd"
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/size/window_width_override=1280
+window/size/window_height_override=720
+window/stretch/mode="canvas_items"
+window/handheld/orientation=0
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+textures/canvas_textures/default_texture_filter=0
+environment/defaults/default_clear_color=Color(0.0235294, 0.0392157, 0.0862745, 1)
+
+[android]
+architectures/arm64-v8a=true
+architectures/armeabi-v7a=true
+permissions/access_network_state=false
+permissions/internet=false
+texture_format/etc2_astc=true
+
+[audio]
+driver/enable_input=false
+driver/mix_rate=44100
