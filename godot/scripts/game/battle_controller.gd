@@ -410,7 +410,7 @@ func use_global_skill(skill_id: String, confirmed: bool = false) -> void:
 			var target := {"x": cast_target.x, "y": cast_target.y}
 			_add_effect({"kind": "meteor", "x": target["x"], "y": target["y"], "life": 1.0, "max_life": 1.0, "color": Color("#ff7187"), "fired": false})
 		"freeze":
-			for enemy in _enemies_near(cast_target.x, cast_target.y, 120.0):
+			for enemy in _enemies_near(cast_target.x, cast_target.y, SpellArt.FREEZE_RADIUS):
 				if not enemy["dead"]:
 					enemy["stun"] = maxf(float(enemy["stun"]), 2.4)
 					enemy["status"] = "CONGELADO"
@@ -596,6 +596,8 @@ func _update_enemies(delta: float) -> void:
 			pending_cleanup.append(index)
 			continue
 		var point := _point_on_path(float(enemy["progress"]))
+		var horizontal := point.x - float(enemy["x"])
+		if absf(horizontal) > 0.01: enemy["facing"] = signf(horizontal)
 		enemy["x"] = point.x
 		enemy["y"] = point.y
 		enemy["hit_flash"] = maxf(0.0, float(enemy["hit_flash"]) - delta)
@@ -635,6 +637,7 @@ func _update_enemies(delta: float) -> void:
 		if bool(enemy["teleporter"]): _update_teleporter(enemy, delta)
 		enemy["ability_timer"] = float(enemy["ability_timer"]) - delta
 		if float(enemy["teleport_charge"]) <= 0.0 and float(enemy["stun"]) <= 0.0:
+			enemy["walk_clock"] = float(enemy.get("walk_clock", 0.0)) + delta * float(enemy["slow"]) * float(enemy["speed"]) / 67.0
 			var slow_factor := float(enemy["slow"]) if float(enemy["slow_time"]) > 0.0 else 1.0
 			enemy["progress"] += (float(enemy["speed"]) * slow_factor * delta) / path_total
 		if float(enemy["progress"]) >= 1.0:
@@ -874,6 +877,8 @@ func _kill_enemy(enemy: Dictionary, source: String = "tower", damage_type: Strin
 	if bool(enemy["dead"]):
 		return
 	enemy["dead"] = true
+	if effects.size() < 160:
+		_add_effect({"kind": "enemy_fall", "snapshot": enemy.duplicate(), "x": enemy["x"], "y": enemy["y"], "life": 0.32, "max_life": 0.32})
 	kills += 1
 	gold += int(enemy["reward"])
 	_increment_stat("kills", 1)
@@ -1070,9 +1075,9 @@ func _update_effects(delta: float) -> void:
 				effect["tick"] = 0.72
 				var target: Dictionary = _sorted_live_enemies()[0] if not _sorted_live_enemies().is_empty() else {}
 				if not target.is_empty(): _deal_damage(target, 48.0, "physical", "hero-nyx", false)
-		if effect["kind"] == "meteor" and not bool(effect.get("fired", false)) and float(effect["life"]) < 0.65:
+		if effect["kind"] == "meteor" and not bool(effect.get("fired", false)) and float(effect["life"]) <= 1.0 - SpellArt.METEOR_IMPACT:
 			effect["fired"] = true
-			for enemy in _enemies_near(float(effect["x"]), float(effect["y"]), 84.0): _deal_damage(enemy, 180.0, "magic", "global", true)
+			for enemy in _enemies_near(float(effect["x"]), float(effect["y"]), SpellArt.METEOR_RADIUS): _deal_damage(enemy, 180.0, "magic", "global", true)
 			_spawn_burst(float(effect["x"]), float(effect["y"]), effect["color"], 22, 95.0)
 			screen_shake = maxf(screen_shake, 0.45)
 		if effect["kind"] == "barrage":
@@ -1244,7 +1249,7 @@ func _draw() -> void:
 	_draw_spots(world)
 	if pending_skill != "":
 		var cursor := (get_global_mouse_position() - FIELD_ORIGIN) / FIELD_SCALE
-		var radius := 84.0 if pending_skill == "meteor" else 120.0
+		var radius := SpellArt.METEOR_RADIUS if pending_skill == "meteor" else SpellArt.FREEZE_RADIUS
 		draw_circle(cursor, radius, Color(1, 0.8, 0.4, 0.12))
 		draw_arc(cursor, radius, 0, TAU, 48, Color("#ffdc85"), 3, true)
 	_draw_effects()
@@ -1314,43 +1319,16 @@ func _draw_tower(tower: Dictionary) -> void :
 
 func _draw_enemy(enemy: Dictionary) -> void:
 	var position := Vector2(float(enemy["x"]), float(enemy["y"]))
-	if bool(enemy["flying"]): position.y -= 17.0 + sin(game_time * 5.0 + float(enemy["progress"]) * 10.0) * 3.0
+	if bool(enemy["flying"]): position.y -= 17.0 + sin(float(enemy.get("walk_clock", 0)) * 5.0) * 3.0
 	var color: Color = Color.WHITE if float(enemy["hit_flash"]) > 0.0 else enemy["color"]
 	var radius: float = float(enemy["radius"])
-	draw_circle(position, radius + 4.0 if enemy["type"] == "boss" else radius + 2.0, Color(color, 0.1))
-	if enemy["type"] == "boss":
-		draw_circle(position, 30.0 + sin(game_time * 2.0) * 1.5, Color(color, 0.18))
-		draw_arc(position, 30.0, 0.0, TAU_VALUE, 40, color, 2.2, true)
-		var crown := PackedVector2Array([position + Vector2(0, -29), position + Vector2(9, -14), position + Vector2(27, -9), position + Vector2(16, 6), position + Vector2(18, 26), position + Vector2(0, 17), position + Vector2(-18, 26), position + Vector2(-16, 6), position + Vector2(-27, -9), position + Vector2(-9, -14)])
-		draw_colored_polygon(crown, Color(color, 0.22)); draw_polyline(crown, color, 2.0, true); draw_rect(Rect2(position - Vector2(5, 2), Vector2(10, 4)), color)
-	else:
-		match enemy["type"]:
-			"runner":
-				draw_colored_polygon(PackedVector2Array([position + Vector2(14, 0), position + Vector2(-8, -10), position + Vector2(-4, 0), position + Vector2(-8, 10)]), Color(color, 0.3)); draw_polyline(PackedVector2Array([position + Vector2(14, 0), position + Vector2(-8, -10), position + Vector2(-4, 0), position + Vector2(-8, 10)]), color, 1.7, true)
-			"tank":
-				var shape := PackedVector2Array([position + Vector2(-14, -11), position + Vector2(-5, -18), position + Vector2(9, -15), position + Vector2(17, -3), position + Vector2(12, 14), position + Vector2(-7, 17), position + Vector2(-17, 6)])
-				draw_colored_polygon(shape, Color(color, 0.28)); draw_polyline(shape, color, 2.0, true); draw_rect(Rect2(position - Vector2(5, 4), Vector2(10, 8)), color)
-			"armored":
-				_draw_rotated_box(position, Vector2(20, 20), PI / 4.0, Color(color, 0.3), color); draw_circle(position, 3.0, color)
-			"shielded":
-				draw_circle(position, 12.0, Color(color, 0.3)); draw_arc(position, 12.0, 0.0, TAU_VALUE, 24, color, 1.5, true); draw_arc(position + Vector2(-2, 0), 18.0, -1.25, 1.25, 16, Color("#a8e7ff"), 3.0, true)
-			"flying":
-				_draw_ellipse(position, Vector2(13, 8), Color(color, 0.3), color)
-				draw_arc(position + Vector2(-8, 0), 12.0, -2.5, 1.0, 16, color, 1.2, true); draw_arc(position + Vector2(8, 0), 12.0, 2.1, 5.6, 16, color, 1.2, true)
-			"healer":
-				draw_circle(position, 12.0, Color(color, 0.3)); draw_arc(position, 12.0, 0.0, TAU_VALUE, 24, color, 1.5, true); draw_rect(Rect2(position - Vector2(3, 8), Vector2(6, 16)), color); draw_rect(Rect2(position - Vector2(8, 3), Vector2(16, 6)), color)
-			"saboteur":
-				_draw_rotated_box(position, Vector2(18, 18), PI / 4.0, Color(color, 0.3), color); draw_line(position + Vector2(-6, 5), position + Vector2(6, -5), color, 1.5, true)
-			"summoner":
-				draw_circle(position, 13.0, Color(color, 0.3)); draw_arc(position, 13.0, 0.0, TAU_VALUE, 24, color, 1.5, true); draw_arc(position, 6.0 + sin(game_time * 4.0) * 1.5, 0.0, TAU_VALUE, 20, color, 1.3, true)
-			"teleporter":
-				draw_circle(position, 12.0, Color(color, 0.3)); draw_arc(position, 12.0, 0.0, TAU_VALUE, 24, color, 1.5, true); draw_arc(position, 6.0, 0.0, TAU_VALUE, 20, color, 1.0, true); draw_line(position + Vector2(-15, 0), position + Vector2(15, 0), color, 1.3, true)
-			_:
-				draw_circle(position, 11.0, Color(color, 0.3)); draw_arc(position, 11.0, 0.0, TAU_VALUE, 24, color, 1.5, true); draw_rect(Rect2(position - Vector2(3, 3), Vector2(6, 6)), color)
+	EnemyArt.draw_unit(self, enemy, position, int(stage["world"]))
 	var bar_width := radius * 2.8
-	draw_rect(Rect2(position + Vector2(-bar_width / 2.0, -radius - 13.0), Vector2(bar_width, 4.0)), Color("#02060eb5"))
-	draw_rect(Rect2(position + Vector2(-bar_width / 2.0, -radius - 13.0), Vector2(bar_width * clampf(float(enemy["hp"]) / float(enemy["max_hp"]), 0.0, 1.0), 4.0)), color)
-	if float(enemy["max_shield"]) > 0.0 and float(enemy["shield"]) > 0.0: draw_rect(Rect2(position + Vector2(-bar_width / 2.0, -radius - 18.0), Vector2(bar_width * clampf(float(enemy["shield"]) / float(enemy["max_shield"]), 0.0, 1.0), 2.0)), Color("#74c8ff"))
+	var bar_y := -84.0 if enemy["type"] == "boss" else -36.0 * radius / 12.0
+	if float(enemy["hp"]) < float(enemy["max_hp"]) or enemy["type"] == "boss":
+		draw_rect(Rect2(position + Vector2(-bar_width / 2.0, bar_y), Vector2(bar_width, 4.0)), Color("#02060eb5"))
+		draw_rect(Rect2(position + Vector2(-bar_width / 2.0, bar_y), Vector2(bar_width * clampf(float(enemy["hp"]) / float(enemy["max_hp"]), 0.0, 1.0), 4.0)), color)
+	if float(enemy["max_shield"]) > 0.0 and float(enemy["shield"]) > 0.0: draw_rect(Rect2(position + Vector2(-bar_width / 2.0, bar_y - 5), Vector2(bar_width * clampf(float(enemy["shield"]) / float(enemy["max_shield"]), 0.0, 1.0), 2.0)), Color("#74c8ff"))
 	if float(enemy["stun"]) > 0:
 		draw_line(position + Vector2(-radius, 0), position + Vector2(radius, 0), Color("#c9f4ff"), 3, true)
 	elif float(enemy["slow_time"]) > 0:
@@ -1427,6 +1405,8 @@ func _draw_effects() -> void:
 		var alpha := clampf(float(effect["life"]) / max_life, 0.0, 1.0)
 		var color: Color = effect.get("color", Color("#75e5ef"))
 		match effect["kind"]:
+			"enemy_fall":
+				EnemyArt.draw_unit(self, effect["snapshot"], Vector2(effect["x"], effect["y"]) + Vector2(progress * 7, progress * 6), int(stage["world"]), alpha)
 			"chain":
 				var from_point: Vector2 = effect["from"]; var to_point: Vector2 = effect["to"]; var midpoint := from_point.lerp(to_point, 0.5) + Vector2(sin(progress * 20.0) * 9.0, cos(progress * 17.0) * 7.0)
 				draw_polyline(PackedVector2Array([from_point, midpoint, to_point]), Color(color, alpha), 3.0, true)
@@ -1470,12 +1450,9 @@ func _draw_effects() -> void:
 			"clone":
 				var clone_position := Vector2(effect["x"], effect["y"]); draw_arc(clone_position, 15.0, 0.0, TAU_VALUE, 24, Color(color, alpha * 0.48), 1.5, true); draw_polyline(PackedVector2Array([clone_position + Vector2(-10, 18), clone_position + Vector2(0, -16), clone_position + Vector2(10, 18)]), Color(color, alpha * 0.48), 1.5, true)
 			"meteor":
-				var meteor_position := Vector2(effect["x"], effect["y"]); draw_arc(meteor_position, 52.0, 0.0, TAU_VALUE, 42, Color(color, alpha * 0.7), 1.0, true); draw_circle(meteor_position + Vector2(112.0 - progress * 132.0, -112.0 + progress * 132.0), 8.0 + progress * 4.0, Color(color, alpha))
+				SpellArt.meteor(self, Vector2(effect["x"], effect["y"]), progress)
 			"freeze_all":
-				var freeze_position := Vector2(effect["x"], effect["y"]); draw_arc(freeze_position, 44.0 + progress * 480.0, 0.0, TAU_VALUE, 60, Color(color, alpha), 2.0, true)
-				for branch in range(12):
-					var freeze_direction := Vector2.RIGHT.rotated(float(branch) * TAU_VALUE / 12.0)
-					draw_line(freeze_position + freeze_direction * 30.0, freeze_position + freeze_direction * (80.0 + progress * 240.0), Color(color, alpha), 1.0, true)
+				SpellArt.freeze(self, Vector2(effect["x"], effect["y"]), progress)
 			"reinforce":
 				draw_arc(Vector2(effect["x"], effect["y"]), 50.0 + progress * 330.0, 0.0, TAU_VALUE, 60, Color(color, alpha), 2.0, true)
 			"move_marker":
